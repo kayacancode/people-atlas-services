@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "people-data-sync",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public"
+  },
+  "account_id": "0c3240509aa27a7e737544ef66423171"
+}
