@@ -1,0 +1,34 @@
+name: Hosted service checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  people-graph:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/people-graph
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/people-graph/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+  reconnect-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/reconnect-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/reconnect-web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
