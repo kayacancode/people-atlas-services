@@ -864,7 +864,10 @@ test('searchPeople gives up on Jev at the deadline and answers from keywords',as
  // since each request's own 20s timeout and the 429 back-off would run far past it.
  let started=0;
  const hangs=((_input:any,init:any)=>{started++;return new Promise<Response>((_resolve,reject)=>{
-  init.signal.addEventListener('abort',()=>reject(init.signal.reason??Error('aborted')));
+  // A real network request keeps Node alive; an unresolved Promise does not.
+  // Keep this fake request alive on Node 22 until its abort listener fires.
+  const pending=setTimeout(()=>reject(Error('test request did not abort')),2500);
+  init.signal.addEventListener('abort',()=>{clearTimeout(pending);reject(init.signal.reason??Error('aborted'));},{once:true});
  });}) as unknown as typeof fetch;
  try{
   const at=Date.now();
