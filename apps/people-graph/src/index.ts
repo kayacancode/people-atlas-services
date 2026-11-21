@@ -4,6 +4,7 @@ import {schedulingMachineRoute} from './scheduling-routes';
 import {schedulingEmail} from './scheduling-email';
 import type {SchedulingEmailEnv} from './scheduling-email-coordinator';
 export {SchedulingEmailCoordinator} from './scheduling-email-coordinator';
+import {desktopAuth} from './desktop-auth';
 import {repairLegacyGmailContext} from './gmail-context-graph';
 import {bookingOwnerRoute,bookingPublicRoute,bookingOAuthCallback} from './booking-routes';
 import type {BookingEnv} from './booking-types';
@@ -12,7 +13,15 @@ export {BookingCoordinator} from './booking-coordinator';
 import {ownerLensRoute} from './owner-lens-routes';
 import {personContextRoute} from './person-context-routes';
 import {relationshipMemoryRoute} from './relationship-memory-routes';
+import {lifeRoute} from './life-routes';
+import {structureRoute} from './structure-routes';
+import {momentsRoute} from './moments-routes';
+import {ownerIntroductionRoute} from './owner-introduction-routes';
+import {guestOwnerRoute,GUEST_OWNER_PATHS} from './guest-owner-routes';
+import {guestAskPublicRoute} from './guest-ask-routes';
+import {askRoute} from './ask';
 import {peopleMemoryOwnerRoute,peopleMemoryAgentRoute} from './people-memory-agent';
+import {isPeopleOAuthRequest,peopleOAuthRoute} from './people-oauth';
 import {matchingWorkspaces} from './workspace-identity';
 import {makeSession,readSession,sessionCookie} from "./session";
 import {mailRoute,mailCallback,draftRoute,connectionOriginRoute,helperRoute,searchRoute,personFeedbackRoute} from "./mail-routes";
@@ -50,6 +59,7 @@ interface Env extends BookingEnv, SchedulingEmailEnv {
 	ASSETS: Fetcher;
 	GOOGLE_CLIENT_ID: string;
 	TOKEN_SECRET: string;
+	OAUTH_KV?: KVNamespace;
 }
 
 // D1 caps a row at 2MB, so that's the real ceiling; leave headroom under it.
@@ -63,6 +73,8 @@ export default {
 		const { pathname } = url;
 
 		try {
+			if (pathname.startsWith('/api/desktop-auth/')) return desktopAuth(request,env,r=>requireGoogleUser(r,env));
+            if(isPeopleOAuthRequest(request))return await peopleOAuthRoute(request,env,ctx);
             if(pathname.startsWith('/api/cli/')){
                 const browser=['/api/cli/device/approve','/api/cli/device/preview','/api/cli/devices','/api/cli/devices/revoke'].includes(pathname);
                 const auth=browser?await requireGoogleUser(request,env):null;
@@ -70,6 +82,7 @@ export default {
             }
 			if(pathname.startsWith('/api/scheduling/'))return await schedulingMachineRoute(request,env,ctx);
 			if(pathname.startsWith('/api/public/booking/'))return await bookingPublicRoute(request,env);
+			if(pathname.startsWith('/api/public/ask/'))return await guestAskPublicRoute(request,env);
 			if(pathname==='/api/booking'||pathname.startsWith('/api/booking/')){
 				const user=await requireGoogleUser(request,env);if('error' in user)return json({error:user.error},401);
 				return await bookingOwnerRoute(request,env,user.email);
@@ -94,7 +107,10 @@ export default {
 			}
 			if (pathname === "/api/session" && request.method === "DELETE") {
 				if (request.headers.get("origin") !== url.origin) return json({error:"invalid_origin"},403);
-				return Response.json({ok:true},{headers:{"cache-control":"no-store","set-cookie":sessionCookie("")}});
+				const headers = new Headers({"cache-control":"no-store"});
+				headers.append("set-cookie",sessionCookie(""));
+				headers.append("set-cookie","__Host-people-desktop=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0");
+				return Response.json({ok:true},{headers});
 			}
 			if (pathname === "/api/accounts/callback") return await mailCallback(request, env);
 			if (pathname.startsWith("/api/accounts")) {
@@ -115,6 +131,30 @@ export default {
             if(pathname.startsWith('/api/people/memory')){
                 const user=await requireGoogleUser(request,env);if('error' in user)return json({error:user.error},401);
                 return await relationshipMemoryRoute(request,env,user.email);
+            }
+            if(['/api/people/signals','/api/people/signals/settings','/api/people/brief','/api/people/timeline','/api/people/stints','/api/people/teammates','/api/people/job-moves','/api/people/peer-directory','/api/people/peer-answer'].includes(pathname)){
+                const user=await requireGoogleUser(request,env);if('error' in user)return json({error:user.error},401);
+                return await lifeRoute(request,env,user.email);
+            }
+            if(['/api/people/why-now','/api/people/contrast','/api/people/widen','/api/people/bridges','/api/people/atlas'].includes(pathname)){
+                const user=await requireGoogleUser(request,env);if('error' in user)return json({error:user.error},401);
+                return await structureRoute(request,env,user.email);
+            }
+            if(['/api/people/mind','/api/people/mind/archive','/api/people/moments','/api/people/moments/update','/api/people/moments/settings'].includes(pathname)){
+                const user=await requireGoogleUser(request,env);if('error' in user)return json({error:user.error},401);
+                return await momentsRoute(request,env,user.email);
+            }
+            if(['/api/people/introductions','/api/people/introductions/advance','/api/people/introductions/outcome'].includes(pathname)){
+                const user=await requireGoogleUser(request,env);if('error' in user)return json({error:user.error},401);
+                return await ownerIntroductionRoute(request,env,user.email);
+            }
+            if(GUEST_OWNER_PATHS.includes(pathname)){
+                const user=await requireGoogleUser(request,env);if('error' in user)return json({error:user.error},401);
+                return await guestOwnerRoute(request,env,user.email);
+            }
+            if(pathname==='/api/people/ask'){
+                const user=await requireGoogleUser(request,env);if('error' in user)return json({error:user.error},401);
+                return await askRoute(request,env,user.email);
             }
             if (pathname === "/api/people/feedback") {
                 const user=await requireGoogleUser(request,env);
@@ -181,10 +221,10 @@ export default {
 			return json({ error: "server_error" }, 500);
 		}
 
-		if(pathname==='/booking'||pathname.startsWith('/book/')){
+		if(pathname==='/booking'||pathname.startsWith('/book/')||pathname.startsWith('/ask/')){
 			// Use canonical asset paths: requesting .html triggers a clean-URL
 			// redirect and would loop on /booking or drop the public slug.
-			const asset=new URL(request.url);asset.pathname=pathname==='/booking'?'/booking':'/book';asset.search='';
+			const asset=new URL(request.url);asset.pathname=pathname==='/booking'?'/booking':pathname.startsWith('/ask/')?'/ask':'/book';asset.search='';
 			const response=await env.ASSETS.fetch(new Request(asset,request));
 			const headers=new Headers(response.headers);headers.set('referrer-policy','no-referrer');headers.set('cache-control','no-store');headers.set('x-content-type-options','nosniff');
 			return new Response(response.body,{status:response.status,headers});
@@ -275,7 +315,7 @@ export async function requireGoogleUser(
 	const token = bearer(request);
 	if (!token) { const email = await readSession(request,env.TOKEN_SECRET); return email ? {email} : { error: "missing_token" }; }
 	// Scheduling credentials are scoped to our API; never send them to Google.
-	if (token.startsWith("sched_") || token.startsWith("people_") || token.startsWith("pgd1_")) return {error:"invalid_token"};
+	if (token.startsWith("sched_") || token.startsWith("people_") || token.startsWith("pgd1_") || token.includes(':')) return {error:"invalid_token"};
 
 	let resp:Response,info:{aud?:string;email?:string;email_verified?:string|boolean};
 	try{
